@@ -1,3 +1,4 @@
+import io
 import os
 import subprocess
 import threading
@@ -10,14 +11,13 @@ from faster_whisper import WhisperModel
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
-OUTPUT_FOLDER = os.path.join(BASE_DIR, "transcriptions")
 ALLOWED_EXTENSIONS = {"ogg", "wav", "mp3"}
 
 WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "small")
 WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", None)
+JOB_TTL_SECONDS = int(os.environ.get("JOB_TTL_SECONDS", 600))
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 200 * 1024 * 1024
@@ -90,7 +90,7 @@ def update_job(job_id, **kwargs):
             job.update(kwargs)
 
 
-def transcribe_job(job_id, filepath, output_txt):
+def transcribe_job(job_id, filepath):
     try:
         update_job(job_id, status="processing", progress=0)
 
@@ -116,8 +116,6 @@ def transcribe_job(job_id, filepath, output_txt):
                 update_job(job_id, progress=round(pct, 1))
 
         txt = build_txt(segments)
-        with open(output_txt, "w", encoding="utf-8") as f:
-            f.write(txt)
 
         update_job(
             job_id,
@@ -125,7 +123,6 @@ def transcribe_job(job_id, filepath, output_txt):
             progress=100,
             segments=segments,
             txt=txt,
-            txt_file=os.path.basename(output_txt),
         )
     except Exception as exc:
         update_job(job_id, status="error", error=str(exc))
@@ -134,6 +131,23 @@ def transcribe_job(job_id, filepath, output_txt):
             os.remove(filepath)
         except OSError:
             pass
+
+
+def janitor():
+    while True:
+        time.sleep(30)
+        now = time.time()
+        with jobs_lock:
+            expired = [
+                job_id
+                for job_id, job in jobs.items()
+                if now - job["created"] > JOB_TTL_SECONDS
+            ]
+            for job_id in expired:
+                jobs.pop(job_id, None)
+
+
+threading.Thread(target=janitor, daemon=True).start()
 
 
 @app.route("/")
@@ -159,7 +173,6 @@ def upload():
     job_id = uuid.uuid4().hex[:12]
     ext = file.filename.rsplit(".", 1)[1].lower()
     audio_path = os.path.join(UPLOAD_FOLDER, f"{job_id}.{ext}")
-    txt_path = os.path.join(OUTPUT_FOLDER, f"{job_id}.txt")
 
     file.save(audio_path)
 
@@ -172,12 +185,11 @@ def upload():
             "error": None,
             "segments": None,
             "txt": None,
-            "txt_file": None,
             "created": time.time(),
         }
 
     thread = threading.Thread(
-        target=transcribe_job, args=(job_id, audio_path, txt_path), daemon=True
+        target=transcribe_job, args=(job_id, audio_path), daemon=True
     )
     thread.start()
 
@@ -199,10 +211,16 @@ def download(job_id):
         job = jobs.get(job_id)
         if not job or job["status"] != "done":
             return jsonify({"error": "Transcripción no disponible"}), 404
-        txt_path = os.path.join(OUTPUT_FOLDER, job["txt_file"])
+        filename = job["filename"]
+        txt = job["txt"]
 
-    base = os.path.splitext(job["filename"])[0]
-    return send_file(txt_path, as_attachment=True, download_name=f"{base}.txt")
+    base = os.path.splitext(filename)[0]
+    return send_file(
+        io.BytesIO(txt.encode("utf-8")),
+        mimetype="text/plain; charset=utf-8",
+        as_attachment=True,
+        download_name=f"{base}.txt",
+    )
 
 
 if __name__ == "__main__":

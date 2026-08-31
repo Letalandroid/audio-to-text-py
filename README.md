@@ -9,6 +9,7 @@ Web + API para transcribir audios (`.ogg`, `.wav`, `.mp3`) a texto usando **fast
 - 📊 **Barra de progreso** con porcentaje en tiempo real.
 - 💬 Visualización de la transcripción estilo **chat** (con timestamps) o vista de texto plano.
 - ⬇️ Descarga del resultado como archivo `.txt`.
+- 🧹 **Almacenamiento 100% temporal**: el audio se elimina al terminar de transcribir, el `.txt` se genera al vuelo (nunca se guarda en disco) y los trabajos en memoria se purgan automáticamente.
 - 📱 Diseño **responsive**.
 - 🐍 Entorno virtual (`venv`) incluido.
 
@@ -42,10 +43,11 @@ La primera ejecución descarga el modelo Whisper (por defecto `small`) desde Hug
 
 ## ⚙️ Configuración (variables de entorno)
 
-| Variable           | Descripción                               | Default  |
-| ------------------ | ----------------------------------------- | -------- |
+| Variable           | Descripción                                | Default  |
+| ------------------ | ------------------------------------------ | -------- |
 | `WHISPER_MODEL`    | Tamaño del modelo (tiny/base/small/medium) | `small`  |
 | `WHISPER_LANGUAGE` | Idioma forzado (p. ej. `es`); si se omite, se detecta solo | — |
+| `JOB_TTL_SECONDS`  | Segundos que dura un trabajo en memoria antes de purgarse | `600` |
 | `PORT`             | Puerto del servidor                        | `5000`   |
 
 Ejemplo:
@@ -77,8 +79,7 @@ audio-to-text/
 ├── static/
 │   ├── css/style.css      # Estilos responsive
 │   └── js/app.js          # Subida, polling y render
-├── uploads/               # Audios temporales (gitignored)
-├── transcriptions/        # Archivos .txt generados (gitignored)
+├── uploads/               # Audios temporales (se eliminan al transcribir)
 ├── requirements.txt
 └── README.md
 ```
