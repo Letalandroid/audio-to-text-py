@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Audio a Texto</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>🎙️ Audio a Texto</h1>
+    <p class="subtitle">Sube tu audio .ogg · .wav · .mp3 y recibe la transcripción</p>
+  </header>
+
+  <main class="container">
+    <section id="upload-card" class="card">
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Subir archivo de audio">
+        <input type="file" id="file-input" accept=".ogg,.wav,.mp3,audio/ogg,audio/wav,audio/wave,audio/mpeg" hidden />
+        <div class="dz-icon">📂</div>
+        <p class="dz-title">Arrastra tu audio aquí o haz clic para elegirlo</p>
+        <p class="dz-hint">Formatos admitidos: OGG, WAV, MP3</p>
+      </div>
+
+      <div id="file-info" class="file-info" hidden>
+        <span id="file-name"></span>
+        <span id="file-size" class="muted"></span>
+      </div>
+
+      <div id="progress-wrap" class="progress-wrap" hidden>
+        <div class="progress-label">
+          <span id="progress-status">Procesando…</span>
+          <span id="progress-value">0%</span>
+        </div>
+        <div class="progress-track">
+          <div id="progress-bar" class="progress-bar"></div>
+        </div>
+      </div>
+
+      <div id="error-box" class="error-box" hidden></div>
+    </section>
+
+    <section id="result-card" class="card" hidden>
+      <div class="result-head">
+        <h2>Transcripción</h2>
+        <div class="result-actions">
+          <button id="toggle-view" class="btn btn-ghost" type="button">Ver texto</button>
+          <a id="download-btn" class="btn btn-primary" href="#" download>⬇️ Descargar .txt</a>
+        </div>
+      </div>
+
+      <div id="chat-view" class="chat"></div>
+
+      <div id="raw-view" class="raw" hidden>
+        <textarea id="raw-text" readonly></textarea>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <p>Transcripción local con <strong>faster-whisper</strong> · Hecho con Flask</p>
+    </footer>
+  </main>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
