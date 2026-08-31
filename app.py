@@ -101,7 +101,7 @@ def transcribe_job(job_id, filepath):
             kwargs["language"] = WHISPER_LANGUAGE
 
         segments_iter, _info = whisper.transcribe(
-            filepath, chunk_length=30, vad_filter=True, **kwargs
+            filepath, chunk_length=10, vad_filter=True, **kwargs
         )
 
         segments = []
