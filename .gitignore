@@ -1,6 +1,7 @@
 # Entorno virtual
 venv/
 .venv/
+.env
 
 # Archivos temporales de runtime (se eliminan al terminar)
 uploads/

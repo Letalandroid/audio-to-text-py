@@ -1,17 +1,42 @@
-# 🎙️ Audio a Texto
+# 🎙️ Audio a Texto (Speech-to-Text API)
 
-Web + API para transcribir audios (`.ogg`, `.wav`, `.mp3`) a texto usando **faster-whisper** (Whisper de OpenAI optimizado en CPU). Subes el archivo desde la web, una API lo recibe y la transcripción se procesa en segundo plano con una **barra de progreso en vivo**. Al terminar puedes ver la transcripción como chat y **descargar el resultado en `.txt`**.
+Web + API REST para transcribir audios (`.ogg`, `.opus`, `.wav`, `.mp3`) a texto usando **faster-whisper** (Whisper de OpenAI optimizado en CPU con CTranslate2). Soporta peticiones síncronas directas vía `curl` en formato JSON y subidas desde la interfaz web con barra de progreso en vivo.
 
 ## ✨ Características
 
-- 📤 Subida de audio por **arrastrar y soltar** o selección de archivo.
-- 🔁 Procesamiento **asíncrono**: la API devuelve un `job_id` y el estado se consulta por polling.
-- 📊 **Barra de progreso** con porcentaje en tiempo real.
-- 💬 Visualización de la transcripción estilo **chat** (con timestamps) o vista de texto plano.
-- ⬇️ Descarga del resultado como archivo `.txt`.
-- 🧹 **Almacenamiento 100% temporal**: el audio se elimina al terminar de transcribir, el `.txt` se genera al vuelo (nunca se guarda en disco) y los trabajos en memoria se purgan automáticamente.
-- 📱 Diseño **responsive**.
-- 🐍 Entorno virtual (`venv`) incluido.
+- 🎯 **Endpoint síncrono para cURL / APIs (`/api/transcribe`)**: Envía el archivo y recibe la transcripción en JSON directamente.
+- 🎵 **Soporte completo de formatos y MIME Types**:
+  - `audio/ogg; codecs=opus` (formato estándar de notas de voz de WhatsApp / Evolution API)
+  - `audio/ogg`, `audio/opus`
+  - `audio/wav`, `audio/x-wav`, `audio/wave`
+  - `audio/mpeg`, `audio/mp3`
+- ⚙️ **Configuración flexible con variables de entorno (`.env`)**.
+- 📤 Subida por interfaz web (drag & drop) con procesamiento asíncrono y barra de progreso.
+- 🧹 **Almacenamiento 100% temporal**: los archivos de audio se eliminan automáticamente tras procesarse.
+- 🐧 Compatible con Linux, Raspberry Pi 4 (ARM64) y servidores x86_64.
+
+---
+
+## ⚙️ Configuración (.env)
+
+Copia `.env.example` a `.env` y ajusta las variables según tus necesidades:
+
+```bash
+cp .env.example .env
+```
+
+| Variable | Descripción | Default |
+| --- | --- | --- |
+| `HOST` | Host para escuchar peticiones | `0.0.0.0` |
+| `PORT` | Puerto del servidor HTTP | `5000` |
+| `WHISPER_MODEL` | Tamaño del modelo (`tiny`, `base`, `small`, `medium`, `large-v3`) | `base` |
+| `WHISPER_LANGUAGE` | Idioma forzado (ej: `es`); si se omite, se autodetecta | — |
+| `WHISPER_DEVICE` | Dispositivo de cómputo (`cpu` o `cuda`) | `cpu` |
+| `WHISPER_COMPUTE_TYPE` | Tipo de cómputo (`int8` recomendado en CPU, `float16` en GPU) | `int8` |
+| `JOB_TTL_SECONDS` | Segundos para purgar trabajos de la interfaz web en memoria | `600` |
+| `MAX_CONTENT_LENGTH_MB`| Límite máximo de subida en megabytes | `200` |
+
+---
 
 ## 🚀 Instalación
 
@@ -22,67 +47,141 @@ cd audio-to-text-py
 
 # 2. Crear y activar el entorno virtual
 python3 -m venv venv
-source venv/bin/activate   # Windows: venv\Scripts\activate
+source venv/bin/activate
 
 # 3. Instalar dependencias
 pip install -r requirements.txt
 
-# 4. (Opcional) Instalar ffmpeg si no está disponible
-# Ubuntu/Debian: sudo apt install ffmpeg
+# 4. Asegurarse de tener ffmpeg instalado
+# Debian / Ubuntu / Raspberry Pi OS:
+sudo apt update && sudo apt install -y ffmpeg
 ```
 
-## ▶️ Uso
+---
+
+## 🔌 Uso de la API con cURL
+
+### 1. Petición directa (Multipart Form Data)
+
+Ideal para enviar archivos de audio desde la terminal:
 
 ```bash
-python app.py
+curl -X POST http://localhost:5000/api/transcribe \
+  -F "file=@audio.ogg;type=audio/ogg; codecs=opus"
 ```
 
-Abre http://localhost:5000 en tu navegador, sube un audio y espera a que termine la transcripción.
-
-La primera ejecución descarga el modelo Whisper (por defecto `small`) desde Hugging Face; las siguientes son inmediatas.
-
-## ⚙️ Configuración (variables de entorno)
-
-| Variable           | Descripción                                | Default  |
-| ------------------ | ------------------------------------------ | -------- |
-| `WHISPER_MODEL`    | Tamaño del modelo (tiny/base/small/medium) | `small`  |
-| `WHISPER_LANGUAGE` | Idioma forzado (p. ej. `es`); si se omite, se detecta solo | — |
-| `JOB_TTL_SECONDS`  | Segundos que dura un trabajo en memoria antes de purgarse | `600` |
-| `PORT`             | Puerto del servidor                        | `5000`   |
-
-Ejemplo:
+O simplemente:
 
 ```bash
-WHISPER_MODEL=base WHISPER_LANGUAGE=es python app.py
+curl -X POST http://localhost:5000/api/transcribe \
+  -F "file=@audio.ogg"
 ```
 
-## 🔌 API
+### 2. Petición directa enviando audio binario en el cuerpo
 
-| Método | Ruta                  | Descripción                                        |
-| ------ | --------------------- | -------------------------------------------------- |
-| `POST` | `/api/upload`         | Sube el audio (multipart, campo `file`) → `job_id` |
-| `GET`  | `/api/status/<id>`    | Estado del trabajo (progreso, segmentos, texto)    |
-| `GET`  | `/api/download/<id>`  | Descarga la transcripción como `.txt`              |
-
-Ejemplo con `curl`:
+Útil para webhooks o clientes que envían el flujo de audio en bruto con el MIME Type especificado:
 
 ```bash
-curl -F "file=@audio.ogg" http://localhost:5000/api/upload
+curl -X POST http://localhost:5000/api/transcribe \
+  -H "Content-Type: audio/ogg; codecs=opus" \
+  --data-binary @audio.ogg
 ```
 
-## 🗂️ Estructura
+### 3. Petición con Base64 en JSON
 
+Ideal para integraciones como Evolution API o n8n:
+
+```bash
+curl -X POST http://localhost:5000/api/transcribe \
+  -H "Content-Type: application/json" \
+  -d '{
+    "audio": "GkXfo59ChoEBQveBAULygQ8UA...",
+    "mimetype": "audio/ogg; codecs=opus"
+  }'
 ```
-audio-to-text/
-├── app.py                 # API + servidor Flask
-├── templates/index.html   # Interfaz web
-├── static/
-│   ├── css/style.css      # Estilos responsive
-│   └── js/app.js          # Subida, polling y render
-├── uploads/               # Audios temporales (se eliminan al transcribir)
-├── requirements.txt
-└── README.md
+
+### 4. Forzar idioma en la petición
+
+Puedes pasar el parámetro `language` (ej. `es`, `en`):
+
+```bash
+curl -X POST "http://localhost:5000/api/transcribe?language=es" \
+  -F "file=@audio.ogg"
 ```
+
+---
+
+## 📥 Respuesta JSON
+
+```json
+{
+  "status": "success",
+  "text": "Hola, esto es una prueba de transcripción de audio a texto.",
+  "language": "es",
+  "duration": 3.45,
+  "segments": [
+    {
+      "start": 0.0,
+      "end": 3.45,
+      "text": "Hola, esto es una prueba de transcripción de audio a texto."
+    }
+  ]
+}
+```
+
+Si el formato o MIME Type no es soportado, devuelve HTTP 400 con los detalles:
+
+```json
+{
+  "error": "Formato de audio no soportado.",
+  "detail": "Tipo recibido: 'application/pdf', archivo: 'document.pdf'.",
+  "supported_mimetypes": [
+    "audio/ogg; codecs=opus",
+    "audio/ogg",
+    "audio/opus",
+    "audio/wav",
+    "audio/mpeg"
+  ],
+  "supported_extensions": [".ogg", ".opus", ".wav", ".mp3"]
+}
+```
+
+---
+
+## 🛠️ Servicio Systemd (Raspberry Pi / Linux)
+
+Para ejecutar el servicio automáticamente en el arranque:
+
+1. Crea el archivo de servicio `/etc/systemd/system/audio-to-text.service`:
+
+```ini
+[Unit]
+Description=Servicio Speech to Text (faster-whisper)
+After=network.target
+
+[Service]
+User=lta
+WorkingDirectory=/home/lta/projects/audio-to-text-py
+Environment="PATH=/home/lta/projects/audio-to-text-py/.venv/bin"
+ExecStart=/home/lta/projects/audio-to-text-py/.venv/bin/python app.py
+
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+2. Habilita y arranca el servicio:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now audio-to-text.service
+sudo systemctl status audio-to-text.service
+```
+
+---
 
 ## 📄 Licencia
 
