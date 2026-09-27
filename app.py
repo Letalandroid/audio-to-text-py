@@ -263,7 +263,7 @@ def get_duration(filepath):
         return None
 
 
-def transcribe_audio_file(filepath: str, language: str = None) -> dict:
+def transcribe_audio_file(filepath: str, language: str = None, progress_callback=None) -> dict:
     """
     Transcribe un archivo de audio o video de forma síncrona usando faster-whisper.
     Si el archivo es un video (ej. .mkv, .mp4, .webm), extrae primero la pista de audio con ffmpeg.
@@ -293,6 +293,8 @@ def transcribe_audio_file(filepath: str, language: str = None) -> dict:
             })
             if clean_text:
                 text_parts.append(clean_text)
+            if progress_callback:
+                progress_callback(seg.start, seg.end, clean_text, total_duration)
 
         full_text = " ".join(text_parts).strip()
         detected_lang = getattr(info, "language", lang)
@@ -727,13 +729,23 @@ if __name__ == "__main__":
             exit(1)
         print(f"Iniciando transcripción de archivo: {target_path}")
         start_t = time.time()
-        result = transcribe_audio_file(target_path, language=args.language)
+        last_pct = -5
+
+        def on_progress(start, end, text, total_dur):
+            nonlocal last_pct
+            if total_dur and total_dur > 0:
+                pct = int(end / total_dur * 100)
+                if pct >= last_pct + 5 or pct >= 99:
+                    last_pct = pct
+                    print(f"[{format_timestamp(end)} / {format_timestamp(total_dur)}] ({pct}%) {text[:55]}...", flush=True)
+
+        result = transcribe_audio_file(target_path, language=args.language, progress_callback=on_progress)
         out_txt = build_txt(result["segments"])
         out_file = args.output or f"{os.path.splitext(target_path)[0]}.txt"
         with open(out_file, "w", encoding="utf-8") as f:
             f.write(out_txt)
         elapsed = time.time() - start_t
-        print(f"Transcripción completada en {elapsed:.1f}s.")
+        print(f"\nTranscripción completada en {elapsed:.1f}s.")
         print(f"Duración de audio/video: {result['duration']}s | Idioma detectado: {result['language']}")
         print(f"Archivo guardado en: {out_file}")
     else:
