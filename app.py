@@ -712,7 +712,7 @@ def download(job_id):
     )
 
 
-if __name__ == "__main__":
+def main():
     import argparse
     parser = argparse.ArgumentParser(description="Audio/Video to Text Transcription Service")
     parser.add_argument("--file", "-f", help="Directly transcribe a local audio/video file (e.g. .mkv, .wav, .mp3)")
@@ -726,7 +726,7 @@ if __name__ == "__main__":
         target_path = os.path.abspath(args.file)
         if not os.path.exists(target_path):
             print(f"Error: El archivo no existe: {target_path}")
-            exit(1)
+            sys.exit(1)
         print(f"Iniciando transcripción de archivo: {target_path}")
         start_t = time.time()
         last_pct = -5
@@ -750,3 +750,7 @@ if __name__ == "__main__":
         print(f"Archivo guardado en: {out_file}")
     else:
         app.run(host=args.host, port=args.port, debug=False)
+
+
+if __name__ == "__main__":
+    main()
