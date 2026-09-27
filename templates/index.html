@@ -9,16 +9,16 @@
 <body>
   <header class="topbar">
     <h1>🎙️ Audio a Texto</h1>
-    <p class="subtitle">Sube tu audio .ogg · .wav · .mp3 y recibe la transcripción</p>
+    <p class="subtitle">Sube tu audio o video (.ogg, .wav, .mp3, .mkv, .mp4, .webm) y recibe la transcripción</p>
   </header>
 
   <main class="container">
     <section id="upload-card" class="card">
-      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Subir archivo de audio">
-        <input type="file" id="file-input" accept=".ogg,.wav,.mp3,audio/ogg,audio/wav,audio/wave,audio/mpeg" hidden />
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Subir archivo de audio o video">
+        <input type="file" id="file-input" accept=".ogg,.opus,.wav,.mp3,.mkv,.mp4,.webm,audio/*,video/*" hidden />
         <div class="dz-icon">📂</div>
-        <p class="dz-title">Arrastra tu audio aquí o haz clic para elegirlo</p>
-        <p class="dz-hint">Formatos admitidos: OGG, WAV, MP3</p>
+        <p class="dz-title">Arrastra tu audio o video aquí o haz clic para elegirlo</p>
+        <p class="dz-hint">Formatos admitidos: OGG, WAV, MP3, MKV, MP4, WebM</p>
       </div>
 
       <div id="file-info" class="file-info" hidden>

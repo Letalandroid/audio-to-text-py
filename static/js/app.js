@@ -64,8 +64,12 @@
 
     const tick = async () => {
       if (!polling) return;
-      try {
         const res = await fetch(`/api/status/${jobId}`);
+        if (res.status === 429) {
+          // Rate limited / Too Many Requests: esperar antes de reintentar
+          setTimeout(tick, 2500);
+          return;
+        }
         if (!res.ok) throw new Error("No se pudo consultar el estado");
         const job = await res.json();
         updateProgress(job);

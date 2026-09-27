@@ -122,3 +122,86 @@ def test_transcribe_invalid_mimetype():
     assert res.status_code == 400
     data = res.get_json()
     assert "error" in data
+
+
+@pytest.fixture(scope="session")
+def test_mkv_file(tmp_path_factory):
+    fn = tmp_path_factory.mktemp("video") / "test_sample.mkv"
+    # Generate a 1-second video with audio sine wave in MKV container
+    cmd = [
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", "color=c=black:s=320x240:d=1",
+        "-f", "lavfi", "-i", "sine=frequency=1000:duration=1",
+        "-c:v", "libx264", "-c:a", "aac",
+        "-shortest", str(fn)
+    ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    return str(fn)
+
+
+def test_validate_mkv():
+    valid, ext = validate_audio_type(content_type="video/x-matroska")
+    assert valid is True
+    assert ext == "mkv"
+
+    valid, ext = validate_audio_type(filename="meeting.mkv")
+    assert valid is True
+    assert ext == "mkv"
+
+    valid, ext = validate_audio_type(raw_bytes=b"\x1a\x45\xdf\xa3\x93\x42")
+    assert valid is True
+    assert ext == "mkv"
+
+
+def test_transcribe_mkv_multipart(test_mkv_file):
+    client = app.test_client()
+    with open(test_mkv_file, "rb") as f:
+        res = client.post(
+            "/api/transcribe",
+            data={"file": (f, "test.mkv", "video/x-matroska")},
+            content_type="multipart/form-data"
+        )
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["status"] == "success"
+    assert "text" in data
+    assert "duration" in data
+
+
+def test_transcribe_local_file_endpoint(test_mkv_file):
+    client = app.test_client()
+    res = client.post(
+        "/api/transcribe-file",
+        json={"filepath": test_mkv_file, "sync": True}
+    )
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["status"] == "success"
+    assert "text" in data
+    assert "segments" in data
+
+
+def test_request_with_retry_handles_429(monkeypatch):
+    from unittest.mock import MagicMock
+    from client import request_with_retry
+
+    calls = 0
+    def mock_request(method, url, **kwargs):
+        nonlocal calls
+        calls += 1
+        resp = MagicMock()
+        if calls == 1:
+            resp.status_code = 429
+            resp.headers = {"Retry-After": "0.01"}
+            return resp
+        resp.status_code = 200
+        resp.json.return_value = {"status": "ok"}
+        return resp
+
+    import requests
+    monkeypatch.setattr(requests, "request", mock_request)
+    resp = request_with_retry("GET", "http://example.com/api/test", initial_backoff=0.01)
+    assert calls == 2
+    assert resp.status_code == 200
+
+

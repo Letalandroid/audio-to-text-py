@@ -1,18 +1,22 @@
-# 🎙️ Audio a Texto (Speech-to-Text API)
+# 🎙️ Audio a Texto (Speech-to-Text API & CLI)
 
-Web + API REST para transcribir audios (`.ogg`, `.opus`, `.wav`, `.mp3`) a texto usando **faster-whisper** (Whisper de OpenAI optimizado en CPU con CTranslate2). Soporta peticiones síncronas directas vía `curl` en formato JSON y subidas desde la interfaz web con barra de progreso en vivo.
+Web + API REST + CLI para transcribir audios (`.ogg`, `.opus`, `.wav`, `.mp3`) y videos (`.mkv`, `.mp4`, `.webm`) a texto usando **faster-whisper** (Whisper de OpenAI optimizado en CPU con CTranslate2 y extracción automática de audio con ffmpeg). Soporta peticiones síncronas directas vía `curl` en formato JSON, endpoint de archivos locales para procesar archivos grandes sin transferirlos por red, ejecución por línea de comandos (CLI), y subidas desde la interfaz web con barra de progreso en vivo.
 
 ## ✨ Características
 
 - 🎯 **Endpoint síncrono para cURL / APIs (`/api/transcribe`)**: Envía el archivo y recibe la transcripción en JSON directamente.
+- 🎬 **Extracción automática de audio en videos (`.mkv`, `.mp4`, `.webm`)**: Extrae la pista de audio a 16kHz mono con ffmpeg antes de transcribir.
+- ⚡ **Endpoint para archivos locales (`/api/transcribe-file`)**: Permite procesar archivos pesados existentes en el servidor (ej. reuniones en MKV de varios GB) sin transferirlos por la red.
+- 💻 **Modo CLI directo**: Transcribe cualquier archivo local desde la terminal con `python app.py --file archivo.mkv`.
+- 🛡️ **Cliente HTTP resiliente (`client.py`)**: Manejo automático de reintentos ante **HTTP 429 (Too Many Requests / Rate Limit)** con backoff exponencial y timeouts.
 - 🎵 **Soporte completo de formatos y MIME Types**:
-  - `audio/ogg; codecs=opus` (formato estándar de notas de voz de WhatsApp / Evolution API)
-  - `audio/ogg`, `audio/opus`
+  - `audio/ogg; codecs=opus`, `audio/ogg`, `audio/opus`
   - `audio/wav`, `audio/x-wav`, `audio/wave`
   - `audio/mpeg`, `audio/mp3`
+  - `video/x-matroska`, `video/mkv`, `video/webm`, `video/mp4`
 - ⚙️ **Configuración flexible con variables de entorno (`.env`)**.
 - 📤 Subida por interfaz web (drag & drop) con procesamiento asíncrono y barra de progreso.
-- 🧹 **Almacenamiento 100% temporal**: los archivos de audio se eliminan automáticamente tras procesarse.
+- 🧹 **Almacenamiento 100% temporal**: los archivos temporales se eliminan automáticamente tras procesarse.
 - 🐧 Compatible con Linux, Raspberry Pi 4 (ARM64) y servidores x86_64.
 
 ---

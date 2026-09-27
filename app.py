@@ -23,11 +23,13 @@ WHISPER_MODEL = os.environ.get("WHISPER_MODEL", "base")
 WHISPER_LANGUAGE = os.environ.get("WHISPER_LANGUAGE", None)
 WHISPER_DEVICE = os.environ.get("WHISPER_DEVICE", "cpu")
 WHISPER_COMPUTE_TYPE = os.environ.get("WHISPER_COMPUTE_TYPE", "int8")
+WHISPER_CPU_THREADS = int(os.environ.get("WHISPER_CPU_THREADS", 8))
 JOB_TTL_SECONDS = int(os.environ.get("JOB_TTL_SECONDS", 600))
-MAX_CONTENT_LENGTH_MB = int(os.environ.get("MAX_CONTENT_LENGTH_MB", 200))
+MAX_CONTENT_LENGTH_MB = int(os.environ.get("MAX_CONTENT_LENGTH_MB", 5000))
 
-# Formatos y MIME Types soportados
-ALLOWED_EXTENSIONS = {"ogg", "opus", "wav", "mp3"}
+# Formatos y MIME Types soportados (audio y video como mkv/mp4/webm)
+ALLOWED_EXTENSIONS = {"ogg", "opus", "wav", "mp3", "mkv", "mp4", "webm"}
+VIDEO_EXTENSIONS = {"mkv", "mp4", "webm", "avi", "mov", "flv"}
 
 SUPPORTED_MIME_TYPES = [
     "audio/ogg; codecs=opus",
@@ -40,6 +42,10 @@ SUPPORTED_MIME_TYPES = [
     "audio/mp3",
     "video/ogg",
     "application/ogg",
+    "video/x-matroska",
+    "video/mkv",
+    "video/webm",
+    "video/mp4",
 ]
 
 ALLOWED_BASE_MIMES = {
@@ -52,12 +58,19 @@ ALLOWED_BASE_MIMES = {
     "audio/mp3",
     "video/ogg",
     "application/ogg",
+    "video/x-matroska",
+    "video/mkv",
+    "video/webm",
+    "video/mp4",
 }
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 app = Flask(__name__)
-app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH_MB * 1024 * 1024
+if MAX_CONTENT_LENGTH_MB > 0:
+    app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH_MB * 1024 * 1024
+else:
+    app.config["MAX_CONTENT_LENGTH"] = None
 
 jobs = {}
 jobs_lock = threading.Lock()
@@ -75,6 +88,7 @@ def get_model():
                 WHISPER_MODEL,
                 device=WHISPER_DEVICE,
                 compute_type=WHISPER_COMPUTE_TYPE,
+                cpu_threads=WHISPER_CPU_THREADS,
             )
         return model
 
@@ -97,10 +111,9 @@ def validate_audio_type(content_type: str = "", filename: str = "", raw_bytes: b
     """
     Valida si el content_type, extensión de archivo o magic bytes son soportados.
     Soporta explícitamente:
-    - MIME Type: 'audio/ogg; codecs=opus'
-    - MIME Type: 'audio/ogg', 'audio/opus', 'audio/wav', 'audio/mpeg'
-    - Extensiones: .ogg, .opus, .wav, .mp3
-    - Magic bytes: OggS, RIFF WAVE, ID3 / MP3 sync
+    - Audio: OGG/Opus, WAV, MP3
+    - Video (para extracción automática de audio): MKV, WebM, MP4
+    - Magic bytes: OggS, RIFF WAVE, ID3 / MP3 sync, EBML (MKV/WebM), ftyp (MP4)
     Retorna (es_valido: bool, extension_resuelta: str).
     """
     # 1. Validación por Content-Type
@@ -113,7 +126,13 @@ def validate_audio_type(content_type: str = "", filename: str = "", raw_bytes: b
                     return True, "ogg"
                 elif base == "audio/ogg":
                     return False, ""
-            if "opus" in base or "ogg" in base:
+            if "matroska" in base or "mkv" in base:
+                return True, "mkv"
+            elif "webm" in base:
+                return True, "webm"
+            elif "mp4" in base:
+                return True, "mp4"
+            elif "opus" in base or "ogg" in base:
                 return True, "ogg"
             elif "wav" in base:
                 return True, "wav"
@@ -135,8 +154,73 @@ def validate_audio_type(content_type: str = "", filename: str = "", raw_bytes: b
             return True, "wav"
         if raw_bytes[:3] == b"ID3" or raw_bytes[:2] in (b"\xff\xfb", b"\xff\xf3", b"\xff\xf2"):
             return True, "mp3"
+        # Matroska / WebM EBML header (0x1A 0x45 0xDF 0xA3)
+        if raw_bytes[:4] == b"\x1a\x45\xdf\xa3":
+            return True, "mkv"
+        # MP4 ftyp box signature at bytes 4..8
+        if len(raw_bytes) >= 8 and raw_bytes[4:8] == b"ftyp":
+            return True, "mp4"
 
     return False, ""
+
+
+def extract_audio_if_video(filepath: str) -> tuple[str, bool]:
+    """
+    Si el archivo es un video (ej. .mkv, .mp4, .webm) o contiene pista de video,
+    extrae la pista de audio a un archivo WAV mono a 16kHz optimizado para Whisper
+    usando ffmpeg.
+    Retorna (ruta_audio, es_archivo_temporal).
+    """
+    ext = os.path.splitext(filepath)[1].lower().lstrip(".")
+    is_video = ext in VIDEO_EXTENSIONS
+    if not is_video:
+        try:
+            probe = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-show_entries",
+                    "stream=codec_type",
+                    "-of",
+                    "csv=p=0",
+                    filepath,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if "video" in probe.stdout.lower():
+                is_video = True
+        except Exception:
+            pass
+
+    if not is_video:
+        return filepath, False
+
+    base, _ = os.path.splitext(filepath)
+    extracted_wav = f"{base}_extracted_{uuid.uuid4().hex[:8]}.wav"
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        filepath,
+        "-vn",
+        "-acodec",
+        "pcm_s16le",
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        extracted_wav,
+    ]
+    res = subprocess.run(cmd, capture_output=True, text=True)
+    if res.returncode != 0:
+        raise RuntimeError(f"Error extrayendo audio de video con ffmpeg: {res.stderr}")
+
+    return extracted_wav, True
 
 
 def format_timestamp(seconds):
@@ -181,42 +265,51 @@ def get_duration(filepath):
 
 def transcribe_audio_file(filepath: str, language: str = None) -> dict:
     """
-    Transcribe un archivo de audio de forma síncrona usando faster-whisper.
+    Transcribe un archivo de audio o video de forma síncrona usando faster-whisper.
+    Si el archivo es un video (ej. .mkv, .mp4, .webm), extrae primero la pista de audio con ffmpeg.
     Retorna diccionario con texto, segmentos, idioma detectado y duración.
     """
-    total_duration = get_duration(filepath)
-    whisper = get_model()
-    kwargs = {}
-    lang = language or WHISPER_LANGUAGE
-    if lang:
-        kwargs["language"] = lang
+    audio_path, is_temp = extract_audio_if_video(filepath)
+    try:
+        total_duration = get_duration(audio_path)
+        whisper = get_model()
+        kwargs = {}
+        lang = language or WHISPER_LANGUAGE
+        if lang:
+            kwargs["language"] = lang
 
-    segments_iter, info = whisper.transcribe(
-        filepath, chunk_length=10, vad_filter=True, **kwargs
-    )
+        segments_iter, info = whisper.transcribe(
+            audio_path, chunk_length=10, vad_filter=True, **kwargs
+        )
 
-    segments = []
-    text_parts = []
-    for seg in segments_iter:
-        clean_text = seg.text.strip()
-        segments.append({
-            "start": round(seg.start, 2),
-            "end": round(seg.end, 2),
-            "text": clean_text,
-        })
-        if clean_text:
-            text_parts.append(clean_text)
+        segments = []
+        text_parts = []
+        for seg in segments_iter:
+            clean_text = seg.text.strip()
+            segments.append({
+                "start": round(seg.start, 2),
+                "end": round(seg.end, 2),
+                "text": clean_text,
+            })
+            if clean_text:
+                text_parts.append(clean_text)
 
-    full_text = " ".join(text_parts).strip()
-    detected_lang = getattr(info, "language", lang)
-    duration = getattr(info, "duration", total_duration)
+        full_text = " ".join(text_parts).strip()
+        detected_lang = getattr(info, "language", lang)
+        duration = getattr(info, "duration", total_duration)
 
-    return {
-        "text": full_text,
-        "segments": segments,
-        "language": detected_lang,
-        "duration": round(duration, 2) if duration is not None else total_duration,
-    }
+        return {
+            "text": full_text,
+            "segments": segments,
+            "language": detected_lang,
+            "duration": round(duration, 2) if duration is not None else total_duration,
+        }
+    finally:
+        if is_temp and os.path.exists(audio_path):
+            try:
+                os.remove(audio_path)
+            except OSError:
+                pass
 
 
 def update_job(job_id, **kwargs):
@@ -226,18 +319,28 @@ def update_job(job_id, **kwargs):
             job.update(kwargs)
 
 
-def transcribe_job(job_id, filepath):
+def transcribe_job(job_id, filepath, cleanup_source=True):
+    audio_path = filepath
+    is_temp = False
     try:
         update_job(job_id, status="processing", progress=0)
 
-        total_duration = get_duration(filepath)
+        # Si es un archivo de video (ej. MKV/MP4), extraer audio optimizado
+        audio_path, is_temp = extract_audio_if_video(filepath)
+        if is_temp and cleanup_source:
+            try:
+                os.remove(filepath)
+            except OSError:
+                pass
+
+        total_duration = get_duration(audio_path)
         whisper = get_model()
         kwargs = {}
         if WHISPER_LANGUAGE:
             kwargs["language"] = WHISPER_LANGUAGE
 
         segments_iter, _info = whisper.transcribe(
-            filepath, chunk_length=10, vad_filter=True, **kwargs
+            audio_path, chunk_length=10, vad_filter=True, **kwargs
         )
 
         segments = []
@@ -263,10 +366,16 @@ def transcribe_job(job_id, filepath):
     except Exception as exc:
         update_job(job_id, status="error", error=str(exc))
     finally:
-        try:
-            os.remove(filepath)
-        except OSError:
-            pass
+        if is_temp and os.path.exists(audio_path):
+            try:
+                os.remove(audio_path)
+            except OSError:
+                pass
+        if cleanup_source and os.path.exists(filepath):
+            try:
+                os.remove(filepath)
+            except OSError:
+                pass
 
 
 def janitor():
@@ -308,8 +417,12 @@ def health():
             "audio/opus",
             "audio/wav",
             "audio/mpeg",
+            "video/x-matroska",
+            "video/mkv",
+            "video/webm",
+            "video/mp4",
         ],
-        "supported_extensions": [".ogg", ".opus", ".wav", ".mp3"],
+        "supported_extensions": [".ogg", ".opus", ".wav", ".mp3", ".mkv", ".mp4", ".webm"],
     })
 
 
@@ -463,7 +576,7 @@ def upload():
     if not is_valid:
         return (
             jsonify({
-                "error": "Formato no permitido. Usa archivos .ogg, .opus, .wav o .mp3 (incluyendo audio/ogg; codecs=opus)."
+                "error": "Formato no permitido. Usa archivos de audio (.ogg, .opus, .wav, .mp3) o video (.mkv, .mp4, .webm)."
             }),
             400,
         )
@@ -514,6 +627,62 @@ def upload():
     return jsonify({"job_id": job_id}), 202
 
 
+@app.post("/api/transcribe-file")
+def transcribe_local_file():
+    """
+    Endpoint para transcribir un archivo existente en el servidor local (ej. MKV de varios GB)
+    sin necesidad de transferir gigabytes por la red.
+    Recibe JSON: {"filepath": "/ruta/al/archivo.mkv", "language": "es", "sync": false}
+    """
+    data = request.get_json(silent=True) or request.form or {}
+    filepath = data.get("filepath")
+    if not filepath or not os.path.exists(filepath):
+        return jsonify({"error": f"Archivo no encontrado en el sistema: '{filepath}'"}), 404
+
+    is_valid, ext = validate_audio_type(filename=filepath)
+    if not is_valid:
+        dur = get_duration(filepath)
+        if dur is None:
+            return jsonify({"error": f"Formato no admitido o archivo no procesable: '{filepath}'"}), 400
+
+    sync = str(data.get("sync", "false")).lower() in ("true", "1", "yes")
+    lang = data.get("language") or WHISPER_LANGUAGE
+
+    if sync:
+        try:
+            res = transcribe_audio_file(filepath, language=lang)
+            return jsonify({
+                "status": "success",
+                "text": res["text"],
+                "language": res["language"],
+                "duration": res["duration"],
+                "segments": res["segments"],
+            }), 200
+        except Exception as exc:
+            return jsonify({"status": "error", "error": str(exc)}), 500
+
+    job_id = uuid.uuid4().hex[:12]
+    with jobs_lock:
+        jobs[job_id] = {
+            "id": job_id,
+            "filename": os.path.basename(filepath),
+            "status": "queued",
+            "progress": 0,
+            "error": None,
+            "segments": None,
+            "txt": None,
+            "created": time.time(),
+        }
+
+    # cleanup_source=False para no borrar el archivo original local
+    thread = threading.Thread(
+        target=transcribe_job, args=(job_id, filepath, False), daemon=True
+    )
+    thread.start()
+
+    return jsonify({"job_id": job_id, "status": "queued"}), 202
+
+
 @app.get("/api/status/<job_id>")
 def status(job_id):
     with jobs_lock:
@@ -542,4 +711,30 @@ def download(job_id):
 
 
 if __name__ == "__main__":
-    app.run(host=HOST, port=PORT, debug=False)
+    import argparse
+    parser = argparse.ArgumentParser(description="Audio/Video to Text Transcription Service")
+    parser.add_argument("--file", "-f", help="Directly transcribe a local audio/video file (e.g. .mkv, .wav, .mp3)")
+    parser.add_argument("--output", "-o", help="Output .txt file path")
+    parser.add_argument("--language", "-l", default=WHISPER_LANGUAGE, help="Language code (e.g. es)")
+    parser.add_argument("--host", default=HOST, help="Server host")
+    parser.add_argument("--port", type=int, default=PORT, help="Server port")
+    args = parser.parse_args()
+
+    if args.file:
+        target_path = os.path.abspath(args.file)
+        if not os.path.exists(target_path):
+            print(f"Error: El archivo no existe: {target_path}")
+            exit(1)
+        print(f"Iniciando transcripción de archivo: {target_path}")
+        start_t = time.time()
+        result = transcribe_audio_file(target_path, language=args.language)
+        out_txt = build_txt(result["segments"])
+        out_file = args.output or f"{os.path.splitext(target_path)[0]}.txt"
+        with open(out_file, "w", encoding="utf-8") as f:
+            f.write(out_txt)
+        elapsed = time.time() - start_t
+        print(f"Transcripción completada en {elapsed:.1f}s.")
+        print(f"Duración de audio/video: {result['duration']}s | Idioma detectado: {result['language']}")
+        print(f"Archivo guardado en: {out_file}")
+    else:
+        app.run(host=args.host, port=args.port, debug=False)
