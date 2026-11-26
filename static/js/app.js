@@ -64,6 +64,7 @@
 
     const tick = async () => {
       if (!polling) return;
+      try {
         const res = await fetch(`/api/status/${jobId}`);
         if (res.status === 429) {
           // Rate limited / Too Many Requests: esperar antes de reintentar
@@ -135,6 +136,7 @@
     downloadBtn.href = `/api/download/${currentJobId}`;
     downloadBtn.setAttribute("download", "");
 
+    renderChat();
     setView("chat");
     chatView.scrollTop = chatView.scrollHeight;
   }
@@ -152,8 +154,8 @@
   async function uploadFile(file) {
     if (!file) return;
     const ext = file.name.split(".").pop().toLowerCase();
-    if (!["ogg", "wav", "mp3"].includes(ext)) {
-      showError("Formato no permitido. Sube un archivo .ogg, .wav o .mp3.");
+    if (!["ogg", "opus", "wav", "mp3", "mkv", "mp4", "webm"].includes(ext)) {
+      showError("Formato no permitido. Sube un archivo .ogg, .opus, .wav, .mp3, .mkv, .mp4 o .webm.");
       return;
     }
 
@@ -184,7 +186,11 @@
     }
   });
 
-  fileInput.addEventListener("change", () => uploadFile(fileInput.files[0]));
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    fileInput.value = "";
+    uploadFile(file);
+  });
 
   ["dragenter", "dragover"].forEach((evt) =>
     dropzone.addEventListener(evt, (e) => {
